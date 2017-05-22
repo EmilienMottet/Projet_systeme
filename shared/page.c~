@@ -1,0 +1,202 @@
+#include "queue.h"
+#include"../kernel/process.h"
+#include"phy_mem_allocator.c"
+
+// UTILISER LES FONCTIONS GET POUR AVOIR LES BONS PARAMETRES
+// BIT 1 page table creee dans la case du page directory correspondant
+// BIT 2 Permission LECTURE 
+// BIT 3 Permission ECRITURE
+
+// A FAIRE: UTILISER LES FONCTIONS A LA CREATION DU PROCESSUS, DANS start();?
+
+// Tout l'espace memoire d'un proscess a les memes permissions au meme moment?
+
+// Retourne true si le bit n est a 1, le bit de poids faible est le bit 0
+// Retourne false si n<0 et n>32
+bool is_bit_n_true(int n, uint32_t adr){
+
+  uint32_t mask=0b1;
+
+  if(n<0 || n>32){
+    return false;
+  }
+
+  else{
+
+    mask=mask<<n;
+
+    if((adr & mask)!=0){
+      return true;
+    }
+
+    else{
+      return false;
+    }
+  }
+}
+
+
+// Set le bit n a 0 si boo est false, sinon set le bit n a 1
+// Ne fais rien si n<0 et n>32
+void set_bit_n(int n, bool boo, uint32_t * adr){
+
+  uint32_t mask=0b1;
+
+  if(n<0 || n>32){
+    return;
+  }
+
+  if(boo==false){
+    mask=mask<<n;
+    mask=~mask;
+    *adr=(*adr & mask);
+    return;
+  }
+
+  else{
+    mask=mask<<n;
+    *adr=(*adr & mask);
+    return;
+  }
+}
+
+
+// Retourne l'entier represente par les bits n_fort..n_faible de l'adr
+// Retourne 0, si n_fort-n_faible < 0 ou si n_fort > 31 ou si n_faible < 0
+int get_n_bits(int n_fort, int n_faible, uint32_t adr){
+
+  int num=0;
+  int i;
+  int cpt=0;
+
+  if(n_fort-n_faible<0 || n_fort>31 || n_faible<0){
+    return 0;
+  }
+
+  for(i=n_faible; i>n_fort; i++){
+    if(is_bit_n_true(i, adr)==true){
+      num=num+(0b1<<cpt);
+    }
+    cpt++;
+  }
+  return num;
+}
+
+
+// Autorise la lecture ou non, Bit 2 a 1 pour autoriser
+void permision_lecture(bool boo, uint32_t *page){
+  set_bit_n(2, boo, page);
+}
+
+
+// Autorise la lecture ou non, Bit 3 a 1 pour autoriser
+void permision_ecriture(bool boo, uint32_t *page){
+  set_bit_n(3, boo, page);
+}
+
+
+// Retourne vrai si le process a la permission de lecture
+bool a_permission_lecture(uint32_t page){
+  return is_bit_n_true(2, page);
+}
+
+
+// Retourne vrai si le process a la permission de lecture
+bool a_permission_ecriture(uint32_t page){
+  return is_bit_n_true(3, page);
+}
+
+
+//Creation de la page directory alignes sur 12 bits
+// Retourne le pointeur vers le debut du tableau
+// Fonction a utiliser a la creation du processus
+uint32_t * create_page_directory(void){
+  uint32_t * page_directory;
+  page_directory=memalign(4096, 4096);
+  return page_directory;
+}
+
+
+// Creation de la page table alignes sur 12 bits 
+// Page table creee? 0 dans l'avant dernier bit de poids faible dans la case du page directory correspondant, 1 sinon
+// Met a jour l'avant dernier bit de poids faible dans la case du page directory
+// Ne retourne rien mais met l'adresse du debut de la page table dans la case du page directory
+void create_page_table(uint32_t * case_page_directory){
+
+  uint32_t * page_table;
+  page_table=memalign(4096, 4096);
+
+  *case_page_directory=(uint32_t)page_table;
+  set_bit_n(1, true, case_page_directory);
+
+}
+
+
+// Met l'adresse reelle du processus en fonction de l'adresse virtuelle
+// REECRIRE LA FONCTION AVEC LES FONCTIONS GET, OU UTILISER LES FONCTIONS GET AVANT ET METTRE LES BONS PARAMETRES QUAND ON APPELLE LA FONCTION
+void put_address_reel(uint32_t adr_reel, uint32_t adr_virt, uint32_t *page_directory){
+
+  int offset;
+  uint32_t * case_page_directory;
+  uint32_t * case_page_table;
+
+  offset=get_n_bits(31, 22, adr_virt);
+  case_page_directory=page_directory+offset;
+  create_page_table(case_page_directory);
+
+  offset=get_n_bits(21, 12, adr_virt);
+  case_page_table=((uint32_t *)(*case_page_directory))+offset; //comment caster correctement?
+  *case_page_table=adr_reel;
+
+}
+
+// Retourne l'adresse reelle en fonction du processus et de l'adresse virtuelle
+uint32_t get_address_reel(uint32_t adr_virt, uint32_t * page_directory){
+
+  int offset;
+  uint32_t * case_page_directory;
+  uint32_t * case_page_table;
+
+  offset=get_n_bits(31, 22, adr_virt);
+  case_page_directory=page_directory+offset;
+
+  offset=get_n_bits(21, 12, adr_virt);
+  case_page_table=((uint32_t *)(*case_page_directory))+offset; //comment caster correctement?
+  return * case_page_table; // quel est l'offset du programme? offset_virt=offset_reel
+}
+
+
+//Desalloue les pages allouees aux processus. Desalloue toutes les page table, et la page directory
+void free_page(uint32_t *page_directory){
+  int i;
+  int j;
+  uint32_t * page;
+  page=(uint32_t *)*(page_directory); //pas exactement
+  for(i=0; i<1024; i++){
+    if(is_bit_n_true(1, * (page+i)==true)){
+	for(j=0; j<12; j++){
+	  set_bit_n(j, false, page+i);
+		 }
+	mem_free((uint32_t *)* page, 4096);
+      }
+    (page)++;
+  }
+  mem_free(page_directory, 4096);
+}
+
+
+void put_cr3(int pid){
+
+
+
+}
+
+/* Questions:
+ - un pointeur est sur 32 bits?  oui
+ - une adresse est sur 32 bits?  oui
+ - dépend de quoi?  de l'architecture
+ - quand mettre quoi ou?  au debut
+ - qui appelle la creation de page directory et page table?
+ - l'espace memoire d'un processus ne va jamais changer? Une page table ne changera jamais d'adresse reel pointee? l'espace ne va jamais changer mais offset?
+
+*/
